@@ -83,6 +83,17 @@ export interface TrimesterSnapshot {
   attendance: PresencaDiaria[];
 }
 
+export interface JustificativaFalta {
+  id: string;
+  studentId: string;
+  disciplineId: string;
+  trimester: 1 | 2 | 3;
+  quantidadeReduzida: number;
+  motivo: string;
+  data: string;
+  autorId: string;
+}
+
 export interface DatabaseState {
   anoLectivoIniciado: boolean;
   anoLectivoTerminado: boolean;
@@ -108,6 +119,8 @@ export interface DatabaseState {
     finalGrades: any[]; // Final summary of year end
   } | null;
   riskDisciplines: Record<string, string[]>; // classId -> list of disciplineIds
+  absenceRiskLimits?: Record<string, number>; // classId -> threshold of absences for failure risk (default 15)
+  absenceJustifications?: JustificativaFalta[];
   boletimConfig: Record<string, {
     cabecalho: string;
     alinhamento: 'left' | 'center' | 'right';

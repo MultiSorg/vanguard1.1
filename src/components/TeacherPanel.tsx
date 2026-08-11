@@ -7,10 +7,11 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   BookOpen, Plus, Search, Calendar, FileText, ChevronRight, Award, Lock, Unlock, 
-  Settings, UserPlus, AlertCircle, LogOut, CheckCircle, ShieldAlert, RefreshCw, Eye, Printer, Download, Sparkles
+  Settings, UserPlus, AlertCircle, LogOut, CheckCircle, ShieldAlert, RefreshCw, Eye, Printer, Download, Sparkles,
+  TrendingUp, TrendingDown, Minus, Bell, UserX, Edit3, ArrowUp, ArrowDown
 } from 'lucide-react';
 import { DatabaseState, Professor, Aluno, NotaTrimestre, FaltaTrimestre, PresencaDiaria } from '../types';
-import { saveDatabaseState, calculateStudentGrades, calculateClassRankings, StudentGeneralRank } from '../utils/db';
+import { saveDatabaseState, calculateStudentGrades, calculateClassRankings, getDisciplineStats, StudentGeneralRank } from '../utils/db';
 
 interface TeacherPanelProps {
   dbState: DatabaseState;
@@ -68,7 +69,7 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
   const [dailyAttendanceList, setDailyAttendanceList] = useState<Record<string, 'P' | 'F'>>({});
 
   // --- 4. COORDENAÇÃO STATES (Coordenador only) ---
-  const [coordTab, setCoordTab] = useState<'alunos' | 'ranking-geral' | 'pautas-boletins' | 'grades-config'>('alunos');
+  const [coordTab, setCoordTab] = useState<'alunos' | 'ranking-geral' | 'pautas-boletins' | 'grades-config' | 'faltas-gestao'>('alunos');
   // Student Enrollment
   const [newStudentNome, setNewStudentNome] = useState('');
   const [newStudentIdade, setNewStudentIdade] = useState('');
@@ -77,6 +78,17 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
   const [reportCardStudentId, setReportCardStudentId] = useState('');
   // Print Overlay preview triggers
   const [printLayoutType, setPrintLayoutType] = useState<'boletim' | 'pauta' | 'backup' | null>(null);
+
+  // Absence Limit & Reduction states for Coordinator
+  const [customAbsenceLimitInput, setCustomAbsenceLimitInput] = useState('');
+  const [reduceAbsenceModal, setReduceAbsenceModal] = useState<{
+    studentId: string;
+    studentNome: string;
+    disciplineId: string;
+    currentCount: number;
+  } | null>(null);
+  const [reduceAmountInput, setReduceAmountInput] = useState('1');
+  const [reduceReasonInput, setReduceReasonInput] = useState('Atestado Médico / Justificativa Aprovada');
 
   // --- 5. PERMISSION FOR COORDINATOR TO EDIT GRADES ---
   // A Normal Teacher can toggle if the coordinator is allowed to edit grades in their discipline
@@ -153,6 +165,104 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
     saveDatabaseState(updatedState);
     onUpdateDbState(updatedState);
     triggerSuccess('Configuração de Disciplina de Risco atualizada!');
+  };
+
+  // --- ABSENCE MANAGEMENT FUNCTIONS FOR COORDINATOR ---
+  const currentAbsenceLimit = currentClass ? (dbState.absenceRiskLimits?.[currentClass.id] ?? 15) : 15;
+
+  const handleUpdateAbsenceRiskLimit = (newLimitVal: number) => {
+    if (!currentClass) return;
+    if (isNaN(newLimitVal) || newLimitVal < 1) {
+      triggerError('O limite de faltas para risco de reprovação deve ser no mínimo 1.');
+      return;
+    }
+    const updatedState = { ...dbState };
+    if (!updatedState.absenceRiskLimits) {
+      updatedState.absenceRiskLimits = {};
+    }
+    updatedState.absenceRiskLimits[currentClass.id] = newLimitVal;
+    saveDatabaseState(updatedState);
+    onUpdateDbState(updatedState);
+    triggerSuccess(`Limite de faltas configurado para ${newLimitVal} faltas!`);
+  };
+
+  const handleConfirmReduceAbsence = () => {
+    if (!reduceAbsenceModal || !currentClass) return;
+    const amountToReduce = parseInt(reduceAmountInput, 10);
+    if (isNaN(amountToReduce) || amountToReduce <= 0) {
+      triggerError('A quantidade a reduzir deve ser maior que zero.');
+      return;
+    }
+
+    const updatedState = { ...dbState };
+    const { studentId, disciplineId, currentCount } = reduceAbsenceModal;
+    const newCount = Math.max(0, currentCount - amountToReduce);
+    const actualReduced = currentCount - newCount;
+
+    let absIdx = updatedState.absences.findIndex(
+      a => a.studentId === studentId &&
+           a.disciplineId === disciplineId &&
+           a.trimester === dbState.currentTrimester
+    );
+
+    if (absIdx !== -1) {
+      updatedState.absences[absIdx].count = newCount;
+    }
+
+    if (!updatedState.absenceJustifications) {
+      updatedState.absenceJustifications = [];
+    }
+
+    updatedState.absenceJustifications.push({
+      id: 'justif_' + Date.now(),
+      studentId,
+      disciplineId,
+      trimester: dbState.currentTrimester,
+      quantidadeReduzida: actualReduced,
+      motivo: reduceReasonInput.trim() || 'Abonado pela Coordenação de Turma',
+      data: new Date().toLocaleDateString('pt-PT'),
+      autorId: loggedTeacher.id,
+    });
+
+    saveDatabaseState(updatedState);
+    onUpdateDbState(updatedState);
+    triggerSuccess(`Sucesso! ${actualReduced} falta(s) reduzida(s). Nova contagem: ${newCount}`);
+    setReduceAbsenceModal(null);
+  };
+
+  // Get students in risk of failure due to absences
+  const getAbsenceRiskStudents = () => {
+    if (!currentClass) return [];
+    const limit = currentAbsenceLimit;
+    const students = dbState.alunos.filter(s => s.turmaId === currentClass.id);
+
+    return students.map(st => {
+      let totalAbs = 0;
+      const breakdown: { disciplineId: string; disciplineName: string; count: number }[] = [];
+
+      currentClass.disciplinas.forEach(disc => {
+        const absEntry = dbState.absences.find(
+          a => a.studentId === st.id && a.disciplineId === disc.id && a.trimester === dbState.currentTrimester
+        );
+        const cnt = absEntry ? absEntry.count : 0;
+        totalAbs += cnt;
+        if (cnt > 0) {
+          breakdown.push({
+            disciplineId: disc.id,
+            disciplineName: disc.nome,
+            count: cnt,
+          });
+        }
+      });
+
+      return {
+        student: st,
+        totalAbsences: totalAbs,
+        breakdown,
+        isOverLimit: totalAbs >= limit,
+        isNearLimit: totalAbs >= Math.max(1, limit - 2) && totalAbs < limit,
+      };
+    }).filter(item => item.isOverLimit || item.isNearLimit);
   };
 
   // Helper messages
@@ -937,66 +1047,137 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
           )}
 
           {/* TAB 3: RENDIMENTO DISCIPLINAR (RANKING) */}
-          {activeTab === 'ranking-disciplina' && (
-            <div className="space-y-6">
-              <div className="border-b border-slate-800 pb-4">
-                <h2 className="text-xl font-bold flex items-center space-x-2 text-white">
-                  <Award className="w-5 h-5 text-indigo-400" />
-                  <span>Rendimento Disciplinar ({currentDiscipline?.nome})</span>
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">Ranking de rendimento dos alunos ordenado das maiores notas MAT às menores, exibindo também o volume de faltas absolutas.</p>
-              </div>
+          {activeTab === 'ranking-disciplina' && (() => {
+            const discStats = currentClass
+              ? getDisciplineStats(currentClass.id, loggedTeacher.disciplinaId, dbState.currentTrimester, dbState)
+              : { classAverage: 0, highestGrade: 0, lowestGrade: 0, evaluatedCount: 0, passingCount: 0 };
+            const passPct = Math.round((discStats.passingCount / (discStats.evaluatedCount || 1)) * 100);
 
-              {/* Ranking Table */}
-              <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden max-w-2xl">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400 font-mono text-[10px] uppercase">
-                      <th className="px-5 py-3 text-center">Posição</th>
-                      <th className="px-5 py-3">Estudante</th>
-                      <th className="px-5 py-3">Média MAC</th>
-                      <th className="px-5 py-3">PP</th>
-                      <th className="px-5 py-3">PT</th>
-                      <th className="px-5 py-3">Média MAT</th>
-                      <th className="px-5 py-3 text-right">Faltas Acumuladas</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-850 text-xs text-slate-300">
-                    {getDisciplineRanking().length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="p-8 text-center text-slate-500 font-mono">Nenhum aluno registrado.</td>
+            return (
+              <div className="space-y-6">
+                <div className="border-b border-slate-800 pb-4">
+                  <h2 className="text-xl font-bold flex items-center space-x-2 text-white">
+                    <Award className="w-5 h-5 text-indigo-400" />
+                    <span>Painel de Rendimento Disciplinar ({currentDiscipline?.nome})</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Avaliação comparativa do desempenho individual dos alunos em relação às notas atribuídas pelo professor e à média geral da turma.
+                  </p>
+                </div>
+
+                {/* KPI Metrics comparison cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
+                    <span className="text-[10px] text-slate-500 uppercase font-mono font-bold block">Média da Turma</span>
+                    <span className="text-2xl font-black text-indigo-400 font-mono block mt-1">{discStats.classAverage}</span>
+                    <span className="text-[10px] text-slate-400">Desempenho Médio Global</span>
+                  </div>
+
+                  <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
+                    <span className="text-[10px] text-slate-500 uppercase font-mono font-bold block">Maior Nota Atribuída</span>
+                    <span className="text-2xl font-black text-emerald-400 font-mono block mt-1">{discStats.highestGrade}</span>
+                    <span className="text-[10px] text-slate-400">Recorde do Professor</span>
+                  </div>
+
+                  <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
+                    <span className="text-[10px] text-slate-500 uppercase font-mono font-bold block">Taxa de Aprovação</span>
+                    <span className="text-2xl font-black text-amber-400 font-mono block mt-1">{passPct}%</span>
+                    <span className="text-[10px] text-slate-400">{discStats.passingCount} de {discStats.evaluatedCount} aptos (MAT &ge; 10)</span>
+                  </div>
+
+                  <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
+                    <span className="text-[10px] text-slate-500 uppercase font-mono font-bold block">Alunos Avaliados</span>
+                    <span className="text-2xl font-black text-white font-mono block mt-1">{discStats.evaluatedCount}</span>
+                    <span className="text-[10px] text-slate-400">Total na Disciplina</span>
+                  </div>
+                </div>
+
+                {/* Ranking Table with Comparative Metrics */}
+                <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto">
+                  <table className="w-full min-w-[850px] text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400 font-mono text-[10px] uppercase">
+                        <th className="px-5 py-3 text-center">Posição</th>
+                        <th className="px-5 py-3">Estudante</th>
+                        <th className="px-5 py-3">Média MAC</th>
+                        <th className="px-5 py-3">PP</th>
+                        <th className="px-5 py-3">PT</th>
+                        <th className="px-5 py-3">Média MAT</th>
+                        <th className="px-5 py-3">Comparativo vs Média da Turma</th>
+                        <th className="px-5 py-3">Desempenho Relativo</th>
+                        <th className="px-5 py-3 text-right">Faltas</th>
                       </tr>
-                    ) : (
-                      getDisciplineRanking().map((rk, idx) => {
-                        return (
-                          <tr key={rk.studentId} className="hover:bg-slate-900/10">
-                            <td className="px-5 py-3 text-center font-mono font-bold text-indigo-400">{idx + 1}º</td>
-                            <td className="px-5 py-3">
-                              <span className="font-semibold text-white">{rk.nome}</span>
-                              <span className="text-[10px] text-slate-500 font-mono ml-2">Nº {rk.numero}</span>
-                            </td>
-                            <td className="px-5 py-3 font-mono">{rk.macAverage}</td>
-                            <td className="px-5 py-3 font-mono">{rk.pp !== null ? rk.pp : '-'}</td>
-                            <td className="px-5 py-3 font-mono">{rk.pt !== null ? rk.pt : '-'}</td>
-                            <td className="px-5 py-3 font-mono">
-                              {rk.mat !== null ? (
-                                <span className={`px-2 py-0.5 rounded font-bold ${rk.mat >= 10 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                                  {rk.mat}
-                                </span>
-                              ) : (
-                                <span className="text-slate-600 italic">Pendente</span>
-                              )}
-                            </td>
-                            <td className="px-5 py-3 text-right font-mono text-red-400 font-bold">{rk.absences} F</td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850 text-xs text-slate-300">
+                      {getDisciplineRanking().length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="p-8 text-center text-slate-500 font-mono">Nenhum aluno registrado.</td>
+                        </tr>
+                      ) : (
+                        getDisciplineRanking().map((rk, idx) => {
+                          const studentScore = rk.mat !== null ? rk.mat : (rk.macAverage > 0 ? rk.macAverage : null);
+                          const diff = studentScore !== null ? Number((studentScore - discStats.classAverage).toFixed(1)) : null;
+                          const relativeToMaxPct = discStats.highestGrade > 0 && studentScore !== null 
+                            ? Math.min(100, Math.round((studentScore / discStats.highestGrade) * 100))
+                            : 0;
+
+                          return (
+                            <tr key={rk.studentId} className="hover:bg-slate-900/10">
+                              <td className="px-5 py-3 text-center font-mono font-bold text-indigo-400">{idx + 1}º</td>
+                              <td className="px-5 py-3">
+                                <span className="font-semibold text-white">{rk.nome}</span>
+                                <span className="text-[10px] text-slate-500 font-mono ml-2">Nº {rk.numero}</span>
+                              </td>
+                              <td className="px-5 py-3 font-mono">{rk.macAverage}</td>
+                              <td className="px-5 py-3 font-mono">{rk.pp !== null ? rk.pp : '-'}</td>
+                              <td className="px-5 py-3 font-mono">{rk.pt !== null ? rk.pt : '-'}</td>
+                              <td className="px-5 py-3 font-mono">
+                                {rk.mat !== null ? (
+                                  <span className={`px-2 py-0.5 rounded font-bold ${rk.mat >= 10 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                    {rk.mat}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600 italic">Pendente</span>
+                                )}
+                              </td>
+                              <td className="px-5 py-3 font-mono">
+                                {diff !== null ? (
+                                  diff > 0 ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-[10px]">
+                                      <TrendingUp className="w-3 h-3" /> +{diff} (Acima da Média)
+                                    </span>
+                                  ) : diff === 0 ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/30 text-blue-400 font-bold text-[10px]">
+                                      <Minus className="w-3 h-3" /> 0.0 (Na Média)
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/10 border border-red-500/30 text-red-400 font-bold text-[10px]">
+                                      <TrendingDown className="w-3 h-3" /> {diff} (Abaixo da Média)
+                                    </span>
+                                  )
+                                ) : (
+                                  <span className="text-slate-600 italic">-</span>
+                                )}
+                              </td>
+                              <td className="px-5 py-3 font-mono">
+                                <div className="flex items-center space-x-2">
+                                  <div className="w-16 bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                                    <div className="h-full bg-indigo-500" style={{ width: `${relativeToMaxPct}%` }} />
+                                  </div>
+                                  <span className="text-[10px] text-slate-400">{relativeToMaxPct}% da máx</span>
+                                </div>
+                              </td>
+                              <td className="px-5 py-3 text-right font-mono text-red-400 font-bold">{rk.absences} F</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* TAB 4: COORDENAÇÃO DE TURMA (COORDINATOR EXCLUSIVE) */}
           {activeTab === 'coordenacao' && isCoordinator && (
@@ -1042,6 +1223,20 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
                   }`}
                 >
                   Exames PP/PT & Notas
+                </button>
+                <button
+                  onClick={() => setCoordTab('faltas-gestao')}
+                  className={`pb-2.5 text-xs font-bold uppercase font-mono border-b-2 transition-all flex items-center space-x-1.5 ${
+                    coordTab === 'faltas-gestao' ? 'border-amber-500 text-amber-400' : 'border-transparent text-slate-400 hover:text-slate-350'
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Área de Faltas da Turma</span>
+                  {getAbsenceRiskStudents().filter(s => s.isOverLimit).length > 0 && (
+                    <span className="ml-1 px-1.5 py-0.2 bg-red-600 text-white rounded-full text-[9px] font-extrabold animate-pulse">
+                      {getAbsenceRiskStudents().filter(s => s.isOverLimit).length}
+                    </span>
+                  )}
                 </button>
               </div>
 
@@ -1506,6 +1701,299 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
                 </div>
               )}
 
+              {/* SUB TAB 4.5: GESTÃO DE FALTAS DA TURMA & RISCO DE REPROVAÇÃO */}
+              {coordTab === 'faltas-gestao' && (
+                <div className="space-y-6">
+                  {/* Top Header & Alert Banner */}
+                  <div className="bg-slate-950 border border-slate-800 p-5 rounded-xl space-y-4">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                          <Calendar className="w-5 h-5 text-amber-400" />
+                          <span>Área de Faltas da Turma & Notificações de Risco</span>
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Gestão centralizada de assiduidade, definição do limite de faltas para risco de reprovação e abono/redução de faltas.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 border border-slate-800 rounded-lg">
+                        <span className="text-[10px] text-slate-400 font-mono uppercase font-bold">Limite de Faltas Atual:</span>
+                        <span className="text-sm font-black text-amber-400 font-mono">{currentAbsenceLimit} Faltas</span>
+                      </div>
+                    </div>
+
+                    {/* Active Notifications Section */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-red-400 font-mono flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 text-red-400 animate-pulse" />
+                          Notificações Ativas: Alunos em Risco de Reprovação por Faltas
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {getAbsenceRiskStudents().filter(s => s.isOverLimit).length} aluno(s) acima do limite
+                        </span>
+                      </div>
+
+                      {getAbsenceRiskStudents().filter(s => s.isOverLimit).length === 0 ? (
+                        <div className="p-4 bg-emerald-950/20 border border-emerald-500/20 rounded-lg text-emerald-400 text-xs flex items-center space-x-2">
+                          <CheckCircle className="w-4 h-4" />
+                          <span>Excelente! Nenhum aluno na turma atingiu o limite de {currentAbsenceLimit} faltas no trimestre atual.</span>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {getAbsenceRiskStudents().filter(s => s.isOverLimit).map(item => (
+                            <div key={item.student.id} className="p-4 bg-red-950/40 border border-red-500/40 rounded-xl space-y-2">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <span className="font-bold text-white text-sm block">Nº {item.student.numero} - {item.student.nome}</span>
+                                  <span className="text-[11px] text-red-300 font-mono font-bold">
+                                    Total: {item.totalAbsences} faltas no trimestre (Limite: {currentAbsenceLimit})
+                                  </span>
+                                </div>
+                                <span className="px-2 py-0.5 bg-red-600 text-white font-mono text-[9px] font-black uppercase rounded animate-pulse">
+                                  Risco Crítico
+                                </span>
+                              </div>
+
+                              <div className="text-[11px] text-slate-300 space-y-1 bg-slate-950/60 p-2 rounded border border-red-500/20">
+                                <span className="text-[10px] text-slate-400 uppercase font-mono font-bold block">Faltas por Disciplina:</span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {item.breakdown.map(b => (
+                                    <span key={b.disciplineId} className="px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-red-300">
+                                      {b.disciplineName}: <strong>{b.count}F</strong>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="pt-1 flex justify-end">
+                                <button
+                                  onClick={() => {
+                                    const firstDiscWithAbs = item.breakdown[0]?.disciplineId || currentClass?.disciplinas[0]?.id || '';
+                                    const firstDiscAbsCount = item.breakdown[0]?.count || 1;
+                                    setReduceAbsenceModal({
+                                      studentId: item.student.id,
+                                      studentNome: item.student.nome,
+                                      disciplineId: firstDiscWithAbs,
+                                      currentCount: firstDiscAbsCount
+                                    });
+                                  }}
+                                  className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold text-xs rounded font-mono uppercase flex items-center space-x-1"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Abonar / Reduzir Faltas</span>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Configurar Limite de Faltas para a Turma */}
+                  <div className="p-5 bg-slate-950 border border-slate-800 rounded-xl space-y-4">
+                    <div>
+                      <h4 className="font-bold text-white text-sm">Determinar Limite de Faltas para Risco de Reprovação</h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Ajuste o limite de faltas acumuladas permitido para esta turma. Alunos que atingirem ou ultrapassarem este valor entram automaticamente na lista de risco e enviam notificação à coordenação.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      {[10, 12, 15, 18, 20].map(limitVal => (
+                        <button
+                          key={limitVal}
+                          onClick={() => handleUpdateAbsenceRiskLimit(limitVal)}
+                          className={`px-4 py-2 rounded font-mono text-xs font-bold border transition-colors ${
+                            currentAbsenceLimit === limitVal
+                              ? 'bg-amber-500 text-amber-950 border-amber-400'
+                              : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
+                          }`}
+                        >
+                          {limitVal} Faltas {limitVal === 15 ? '(Padrão)' : ''}
+                        </button>
+                      ))}
+
+                      <div className="flex items-center space-x-2 bg-slate-900 border border-slate-700 p-1 rounded">
+                        <input
+                          type="number"
+                          min="1"
+                          max="50"
+                          placeholder="Outro"
+                          value={customAbsenceLimitInput}
+                          onChange={(e) => setCustomAbsenceLimitInput(e.target.value)}
+                          className="w-16 px-2 py-1 bg-slate-950 text-xs text-white rounded font-mono"
+                        />
+                        <button
+                          onClick={() => {
+                            const val = parseInt(customAbsenceLimitInput, 10);
+                            if (!isNaN(val)) handleUpdateAbsenceRiskLimit(val);
+                          }}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded uppercase font-mono"
+                        >
+                          Aplicar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tabela de Assiduidade e Redução de Faltas dos Alunos */}
+                  <div className="p-5 bg-slate-950 border border-slate-800 rounded-xl space-y-4">
+                    <h4 className="font-bold text-white text-sm">Quadro Geral de Faltas & Ações de Redução</h4>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800 bg-slate-900 text-slate-400 font-mono text-[10px] uppercase">
+                            <th className="p-3">Nº / Nome do Estudante</th>
+                            {currentClass?.disciplinas.map(d => (
+                              <th key={d.id} className="p-3 text-center">{d.nome}</th>
+                            ))}
+                            <th className="p-3 text-center">Total Faltas</th>
+                            <th className="p-3 text-center">Estado de Assiduidade</th>
+                            <th className="p-3 text-right">Ação do Coordenador</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-850 text-slate-300">
+                          {dbState.alunos.filter(a => a.turmaId === currentClass?.id).map(st => {
+                            let totalStAbs = 0;
+                            const discAbsMap: Record<string, number> = {};
+
+                            currentClass?.disciplinas.forEach(d => {
+                              const absEntry = dbState.absences.find(
+                                a => a.studentId === st.id && a.disciplineId === d.id && a.trimester === dbState.currentTrimester
+                              );
+                              const cnt = absEntry ? absEntry.count : 0;
+                              discAbsMap[d.id] = cnt;
+                              totalStAbs += cnt;
+                            });
+
+                            const isAtRisk = totalStAbs >= currentAbsenceLimit;
+                            const isNearRisk = totalStAbs >= Math.max(1, currentAbsenceLimit - 2) && !isAtRisk;
+
+                            return (
+                              <tr key={st.id} className="hover:bg-slate-900/40">
+                                <td className="p-3">
+                                  <span className="font-bold text-white block">Nº {st.numero} - {st.nome}</span>
+                                </td>
+
+                                {currentClass?.disciplinas.map(d => {
+                                  const count = discAbsMap[d.id] || 0;
+                                  return (
+                                    <td key={d.id} className="p-3 text-center font-mono">
+                                      {count > 0 ? (
+                                        <button
+                                          onClick={() => {
+                                            setReduceAbsenceModal({
+                                              studentId: st.id,
+                                              studentNome: st.nome,
+                                              disciplineId: d.id,
+                                              currentCount: count
+                                            });
+                                          }}
+                                          className="px-2 py-0.5 bg-red-950/60 hover:bg-red-900/80 border border-red-500/30 text-red-300 rounded font-bold text-[11px] transition-colors"
+                                          title="Clique para abonar/reduzir faltas nesta disciplina"
+                                        >
+                                          {count} F
+                                        </button>
+                                      ) : (
+                                        <span className="text-slate-600 font-mono">0</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+
+                                <td className="p-3 text-center font-mono font-bold">
+                                  <span className={isAtRisk ? 'text-red-400 font-black' : isNearRisk ? 'text-amber-400' : 'text-emerald-400'}>
+                                    {totalStAbs} Faltas
+                                  </span>
+                                </td>
+
+                                <td className="p-3 text-center">
+                                  {isAtRisk ? (
+                                    <span className="px-2 py-0.5 bg-red-600 text-white font-mono text-[9px] font-bold uppercase rounded">
+                                      Risco de Reprovação
+                                    </span>
+                                  ) : isNearRisk ? (
+                                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono text-[9px] font-bold uppercase rounded">
+                                      Alerta (Próximo)
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono text-[9px] font-bold uppercase rounded">
+                                      Regular
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="p-3 text-right">
+                                  <button
+                                    onClick={() => {
+                                      const firstDiscWithAbs = currentClass?.disciplinas.find(d => (discAbsMap[d.id] || 0) > 0) || currentClass?.disciplinas[0];
+                                      if (firstDiscWithAbs) {
+                                        setReduceAbsenceModal({
+                                          studentId: st.id,
+                                          studentNome: st.nome,
+                                          disciplineId: firstDiscWithAbs.id,
+                                          currentCount: discAbsMap[firstDiscWithAbs.id] || 0
+                                        });
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-400 text-[11px] font-mono font-bold rounded border border-slate-700"
+                                  >
+                                    Reduzir Faltas
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Histórico de Justificativas e Reduções */}
+                  <div className="p-5 bg-slate-950 border border-slate-800 rounded-xl space-y-4">
+                    <h4 className="font-bold text-white text-sm">Histórico de Abonos e Reduções de Faltas Efetuadas</h4>
+                    
+                    {!dbState.absenceJustifications || dbState.absenceJustifications.length === 0 ? (
+                      <p className="text-xs text-slate-500 italic font-mono">Nenhuma redução de falta foi registrada até o momento.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 bg-slate-900 text-slate-400 font-mono text-[10px] uppercase">
+                              <th className="p-3">Data</th>
+                              <th className="p-3">Estudante</th>
+                              <th className="p-3">Disciplina</th>
+                              <th className="p-3 text-center">Faltas Abonadas</th>
+                              <th className="p-3">Motivo / Justificativa</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-850 text-slate-300">
+                            {dbState.absenceJustifications.map(j => {
+                              const st = dbState.alunos.find(a => a.id === j.studentId);
+                              const discObj = currentClass?.disciplinas.find(d => d.id === j.disciplineId);
+
+                              return (
+                                <tr key={j.id} className="hover:bg-slate-900/30 font-mono">
+                                  <td className="p-3 text-slate-400">{j.data}</td>
+                                  <td className="p-3 font-bold text-white">{st ? `Nº ${st.numero} - ${st.nome}` : j.studentId}</td>
+                                  <td className="p-3 text-amber-400">{discObj ? discObj.nome : j.disciplineId}</td>
+                                  <td className="p-3 text-center text-emerald-400 font-bold">-{j.quantidadeReduzida} Faltas</td>
+                                  <td className="p-3 text-slate-300">{j.motivo}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -1609,6 +2097,109 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
                     Salvar Nota
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* REDUCE ABSENCE MODAL */}
+      <AnimatePresence>
+        {reduceAbsenceModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-slate-950 border border-amber-500/40 p-6 rounded-2xl shadow-2xl w-full max-w-md space-y-5"
+            >
+              <div className="flex items-center space-x-3 border-b border-slate-800 pb-3">
+                <Calendar className="w-6 h-6 text-amber-400" />
+                <div>
+                  <h3 className="font-bold text-white text-base">Reduzir / Abonar Faltas de Aluno</h3>
+                  <p className="text-xs text-amber-400 font-mono font-bold">{reduceAbsenceModal.studentNome}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-400 font-mono uppercase">Selecione a Disciplina</label>
+                  <select
+                    value={reduceAbsenceModal.disciplineId}
+                    onChange={(e) => {
+                      const discId = e.target.value;
+                      const absEntry = dbState.absences.find(
+                        a => a.studentId === reduceAbsenceModal.studentId &&
+                             a.disciplineId === discId &&
+                             a.trimester === dbState.currentTrimester
+                      );
+                      setReduceAbsenceModal({
+                        ...reduceAbsenceModal,
+                        disciplineId: discId,
+                        currentCount: absEntry ? absEntry.count : 0
+                      });
+                    }}
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                  >
+                    {currentClass?.disciplinas.map(d => {
+                      const absEntry = dbState.absences.find(
+                        a => a.studentId === reduceAbsenceModal.studentId &&
+                             a.disciplineId === d.id &&
+                             a.trimester === dbState.currentTrimester
+                      );
+                      return (
+                        <option key={d.id} value={d.id}>
+                          {d.nome} (Faltas Atuais: {absEntry ? absEntry.count : 0})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 bg-slate-900 border border-slate-800 rounded">
+                    <span className="text-[10px] text-slate-500 uppercase font-mono block font-bold">Faltas Atuais</span>
+                    <span className="text-xl font-bold font-mono text-red-400">{reduceAbsenceModal.currentCount}</span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-400 font-mono uppercase">Quantidade a Reduzir</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={reduceAbsenceModal.currentCount || 1}
+                      value={reduceAmountInput}
+                      onChange={(e) => setReduceAmountInput(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-slate-700 text-xs font-mono font-bold text-emerald-400 rounded"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-400 font-mono uppercase">Motivo / Justificativa Oficial</label>
+                  <textarea
+                    rows={2}
+                    value={reduceReasonInput}
+                    onChange={(e) => setReduceReasonInput(e.target.value)}
+                    placeholder="Ex: Atestado Médico Nº 882, Participação em Competição ou Justificativa Aprovada"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-800">
+                <button
+                  onClick={() => setReduceAbsenceModal(null)}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-xs text-slate-400 rounded font-mono font-bold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmReduceAbsence}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold text-xs rounded font-mono uppercase"
+                >
+                  Confirmar Redução
+                </button>
               </div>
             </motion.div>
           </div>

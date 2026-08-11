@@ -38,6 +38,8 @@ const DEFAULT_STATE: DatabaseState = {
   snapshots: [],
   yearEndSummary: null,
   riskDisciplines: {},
+  absenceRiskLimits: {},
+  absenceJustifications: [],
   boletimConfig: {},
 };
 
@@ -235,8 +237,12 @@ export function calculateClassRankings(
     const penalty = failingRiskDisciplinesCount * 3.0;
     const averageGrade = Math.max(0, Number((rawAverage - penalty).toFixed(1)));
 
-    // A student is at risk of failing if their average is under 10 (on a 0-20 scale) or if they have more than 15 absences
-    const isAtRisk = averageGrade < 10 || totalAbsences > 15 || failingRiskDisciplinesCount > 0;
+    // Configurable absence risk limit per class (default 15)
+    const absenceLimit = state.absenceRiskLimits?.[turmaId] ?? 15;
+    const isAbsenceAtRisk = totalAbsences >= absenceLimit;
+
+    // A student is at risk if average < 10, or absences >= limit, or failing risk disciplines
+    const isAtRisk = averageGrade < 10 || isAbsenceAtRisk || failingRiskDisciplinesCount > 0;
 
     return {
       studentId: student.id,
@@ -260,4 +266,49 @@ export function calculateClassRankings(
     }
     return a.totalAbsences - b.totalAbsences;
   });
+}
+
+export interface DisciplineComparisonStats {
+  classAverage: number;
+  highestGrade: number;
+  lowestGrade: number;
+  evaluatedCount: number;
+  passingCount: number;
+}
+
+export function getDisciplineStats(
+  turmaId: string,
+  disciplineId: string,
+  trimester: 1 | 2 | 3,
+  state: DatabaseState
+): DisciplineComparisonStats {
+  const students = state.alunos.filter((s) => s.turmaId === turmaId);
+  const gradesList: number[] = [];
+  let passingCount = 0;
+
+  students.forEach((st) => {
+    const report = calculateStudentGrades(st.id, disciplineId, trimester, state);
+    const score = report.mat !== null ? report.mat : (report.macList.length > 0 ? report.macAverage : null);
+    if (score !== null) {
+      gradesList.push(score);
+      if (score >= 10) passingCount++;
+    }
+  });
+
+  if (gradesList.length === 0) {
+    return { classAverage: 0, highestGrade: 0, lowestGrade: 0, evaluatedCount: 0, passingCount: 0 };
+  }
+
+  const sum = gradesList.reduce((a, b) => a + b, 0);
+  const classAverage = Number((sum / gradesList.length).toFixed(1));
+  const highestGrade = Math.max(...gradesList);
+  const lowestGrade = Math.min(...gradesList);
+
+  return {
+    classAverage,
+    highestGrade,
+    lowestGrade,
+    evaluatedCount: gradesList.length,
+    passingCount,
+  };
 }
