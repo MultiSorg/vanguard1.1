@@ -1,5 +1,5 @@
 import { initializeApp, getApps, deleteApp } from 'firebase/app';
-import { getFirestore, initializeFirestore, doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, doc, getDoc, setDoc, onSnapshot, setLogLevel } from 'firebase/firestore';
 import { DatabaseState } from '../types';
 
 export interface FirebaseCustomConfig {
@@ -9,30 +9,48 @@ export interface FirebaseCustomConfig {
   storageBucket: string;
   messagingSenderId: string;
   appId: string;
+  measurementId?: string;
 }
 
-// Get config from localStorage first, or fallback to static Vite import.meta.env
+export const DEFAULT_FIREBASE_CONFIG: FirebaseCustomConfig = {
+  apiKey: 'AIzaSyB4qKsRk_raCHs32OioeH7LX4pQHsF-U8I',
+  authDomain: 'vanguard1-b653d.firebaseapp.com',
+  projectId: 'vanguard1-b653d',
+  storageBucket: 'vanguard1-b653d.firebasestorage.app',
+  messagingSenderId: '438614523977',
+  appId: '1:438614523977:web:ee220d9f4466297d0e7f98',
+  measurementId: 'G-5K4B73RX2Z',
+};
+
+// Get config from localStorage or return official default Vanguard config
 export function getFirebaseConfig(): FirebaseCustomConfig {
   try {
     const saved = localStorage.getItem('vanguard_firebase_config');
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed.apiKey && parsed.projectId) {
-        return parsed;
+      // Check if saved config is valid and not an old dummy/placeholder config
+      const isOldPlaceholder = 
+        !parsed.apiKey || 
+        parsed.apiKey.includes('sua_api_key') || 
+        parsed.projectId === 'meu-projeto-id' || 
+        parsed.projectId === 'vanguard-pro-prod' ||
+        parsed.projectId === 'vanguard-pro';
+
+      if (!isOldPlaceholder && parsed.apiKey && parsed.projectId) {
+        return {
+          ...DEFAULT_FIREBASE_CONFIG,
+          ...parsed,
+        };
+      } else {
+        // Clear stale/dummy localStorage entry
+        localStorage.removeItem('vanguard_firebase_config');
       }
     }
   } catch (e) {
     console.warn('Erro ao ler configuração do localStorage:', e);
   }
 
-  return {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyB4qKsRk_raCHs32OioeH7LX4pQHsF-U8I',
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'vanguard1-b653d.firebaseapp.com',
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'vanguard1-b653d',
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'vanguard1-b653d.firebasestorage.app',
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '438614523977',
-    appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:438614523977:web:ee220d9f4466297d0e7f98',
-  };
+  return DEFAULT_FIREBASE_CONFIG;
 }
 
 export function saveFirebaseConfig(config: FirebaseCustomConfig): void {
@@ -82,7 +100,9 @@ function getFirestoreInstance() {
         app = apps[0];
       }
       try {
+        setLogLevel('error');
         db = initializeFirestore(app, {
+          experimentalForceLongPolling: true,
           experimentalAutoDetectLongPolling: true,
         });
       } catch (e) {

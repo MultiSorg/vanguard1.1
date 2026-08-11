@@ -8,7 +8,7 @@ import { motion } from 'motion/react';
 import { Wrench, Key, Lock, Trash2, Database, ShieldAlert, X, Eye, EyeOff, Save, Download, Upload, CheckCircle2, AlertTriangle, Cloud, CloudOff, RefreshCw, Info, HelpCircle, Sparkles } from 'lucide-react';
 import { DatabaseState, Professor } from '../types';
 import { getDatabaseState, saveDatabaseState, resetYearData } from '../utils/db';
-import { getFirebaseConfig, saveFirebaseConfig, clearFirebaseConfig, isFirebaseConfigured } from '../utils/firebase';
+import { getFirebaseConfig, saveFirebaseConfig, clearFirebaseConfig, isFirebaseConfigured, DEFAULT_FIREBASE_CONFIG } from '../utils/firebase';
 import SalesPortfolioModal from './SalesPortfolioModal';
 
 interface SupportPanelProps {
@@ -46,8 +46,16 @@ export default function SupportPanel({
   const [showSalesPortfolio, setShowSalesPortfolio] = useState(false);
 
   // Firebase Cloud Guide states
-  const [firebaseTab, setFirebaseTab] = useState<'guide' | 'manual'>('guide');
+  const [firebaseTab, setFirebaseTab] = useState<'manual' | 'guide'>('manual');
   const [customConfig, setCustomConfig] = useState(() => getFirebaseConfig());
+
+  const handleFillDefaultFirebase = () => {
+    setCustomConfig(DEFAULT_FIREBASE_CONFIG);
+    saveFirebaseConfig(DEFAULT_FIREBASE_CONFIG);
+    setSuccessMsg('Credenciais Padrão do Vanguard Cloud restauradas com sucesso!');
+    onManualSync();
+    setTimeout(() => setSuccessMsg(''), 4000);
+  };
 
   const handleSaveCustomFirebase = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -419,13 +427,14 @@ service cloud.firestore {
                   </ol>
 
                   <div className="p-3 bg-slate-900 border border-slate-800 rounded font-mono text-[10px] space-y-1 select-all">
-                    <div className="text-slate-500 font-bold uppercase mb-1">// Variáveis de Ambiente do Firebase</div>
-                    <div className="text-amber-400">VITE_FIREBASE_API_KEY="sua_api_key_aqui"</div>
-                    <div className="text-amber-400">VITE_FIREBASE_AUTH_DOMAIN="seu_projeto.firebaseapp.com"</div>
-                    <div className="text-amber-400">VITE_FIREBASE_PROJECT_ID="seu_projeto_id"</div>
-                    <div className="text-amber-400">VITE_FIREBASE_STORAGE_BUCKET="seu_projeto.appspot.com"</div>
-                    <div className="text-amber-400">VITE_FIREBASE_MESSAGING_SENDER_ID="sender_id_aqui"</div>
-                    <div className="text-amber-400">VITE_FIREBASE_APP_ID="app_id_aqui"</div>
+                    <div className="text-slate-500 font-bold uppercase mb-1">// Variáveis de Ambiente Ativas do Firebase</div>
+                    <div className="text-amber-400">VITE_FIREBASE_API_KEY="{customConfig.apiKey || 'AIzaSyB4qKsRk_raCHs32OioeH7LX4pQHsF-U8I'}"</div>
+                    <div className="text-amber-400">VITE_FIREBASE_AUTH_DOMAIN="{customConfig.authDomain || 'vanguard1-b653d.firebaseapp.com'}"</div>
+                    <div className="text-amber-400">VITE_FIREBASE_PROJECT_ID="{customConfig.projectId || 'vanguard1-b653d'}"</div>
+                    <div className="text-amber-400">VITE_FIREBASE_STORAGE_BUCKET="{customConfig.storageBucket || 'vanguard1-b653d.firebasestorage.app'}"</div>
+                    <div className="text-amber-400">VITE_FIREBASE_MESSAGING_SENDER_ID="{customConfig.messagingSenderId || '438614523977'}"</div>
+                    <div className="text-amber-400">VITE_FIREBASE_APP_ID="{customConfig.appId || '1:438614523977:web:ee220d9f4466297d0e7f98'}"</div>
+                    <div className="text-amber-400">VITE_FIREBASE_MEASUREMENT_ID="{customConfig.measurementId || 'G-5K4B73RX2Z'}"</div>
                   </div>
 
                   <p className="text-slate-400 text-[11px]">
@@ -434,59 +443,125 @@ service cloud.firestore {
                 </div>
               ) : (
                 <form onSubmit={handleSaveCustomFirebase} className="space-y-3 text-xs text-slate-300 bg-slate-950/60 p-4 rounded-lg border border-slate-850">
-                  <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded text-[11px] text-amber-300 flex items-start space-x-2">
-                    <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>
-                      Insira as credenciais do seu projeto Firebase diretamente para ativar a sincronização Cloud instantaneamente neste navegador/dispositivo sem necessidade de reiniciar o servidor.
-                    </span>
+                  <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded text-[11px] text-amber-300 flex items-start justify-between gap-2">
+                    <div className="flex items-start space-x-2">
+                      <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span>
+                        Credenciais de configuração da Nuvem (Firebase) ativas para sincronização automática de dados.
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleFillDefaultFirebase}
+                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold uppercase text-[10px] rounded transition-all shrink-0 cursor-pointer"
+                      title="Preencher automaticamente as credenciais padrão do Vanguard Cloud"
+                    >
+                      Preencher Padrão Vanguard
+                    </button>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                     <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">API Key *</label>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">API Key (apiKey) *</label>
                       <input
                         type="text"
                         required
-                        placeholder="AIzaSy..."
+                        placeholder="AIzaSyB4qKsRk_raCHs32OioeH7LX4pQHsF-U8I"
                         value={customConfig.apiKey}
                         onChange={(e) => setCustomConfig({ ...customConfig, apiKey: e.target.value })}
                         className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Project ID *</label>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Project ID (projectId) *</label>
                       <input
                         type="text"
                         required
-                        placeholder="meu-projeto-id"
+                        placeholder="vanguard1-b653d"
                         value={customConfig.projectId}
                         onChange={(e) => setCustomConfig({ ...customConfig, projectId: e.target.value })}
                         className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Auth Domain (Opcional)</label>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Auth Domain (authDomain)</label>
                       <input
                         type="text"
-                        placeholder="projeto.firebaseapp.com"
+                        placeholder="vanguard1-b653d.firebaseapp.com"
                         value={customConfig.authDomain}
                         onChange={(e) => setCustomConfig({ ...customConfig, authDomain: e.target.value })}
                         className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Storage Bucket (Opcional)</label>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Storage Bucket (storageBucket)</label>
                       <input
                         type="text"
-                        placeholder="projeto.appspot.com"
+                        placeholder="vanguard1-b653d.firebasestorage.app"
                         value={customConfig.storageBucket}
                         onChange={(e) => setCustomConfig({ ...customConfig, storageBucket: e.target.value })}
                         className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
                       />
                     </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Messaging Sender ID (messagingSenderId)</label>
+                      <input
+                        type="text"
+                        placeholder="438614523977"
+                        value={customConfig.messagingSenderId}
+                        onChange={(e) => setCustomConfig({ ...customConfig, messagingSenderId: e.target.value })}
+                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">App ID (appId)</label>
+                      <input
+                        type="text"
+                        placeholder="1:438614523977:web:ee220d9f4466297d0e7f98"
+                        value={customConfig.appId}
+                        onChange={(e) => setCustomConfig({ ...customConfig, appId: e.target.value })}
+                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Measurement ID (measurementId)</label>
+                      <input
+                        type="text"
+                        placeholder="G-5K4B73RX2Z"
+                        value={customConfig.measurementId || ''}
+                        onChange={(e) => setCustomConfig({ ...customConfig, measurementId: e.target.value })}
+                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
                   </div>
 
-                  <div className="pt-2 flex items-center justify-between border-t border-slate-800">
+                  {/* Summary of Active Config */}
+                  <div className="p-3 bg-slate-900 border border-slate-800 rounded font-mono text-[10px] space-y-1">
+                    <div className="text-slate-400 font-bold uppercase flex justify-between items-center mb-1">
+                      <span>// Credenciais Ativas do Vanguard Cloud</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(JSON.stringify(customConfig, null, 2));
+                          setSuccessMsg('Configuração da nuvem copiada para a área de transferência!');
+                          setTimeout(() => setSuccessMsg(''), 3000);
+                        }}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 underline font-sans cursor-pointer"
+                      >
+                        Copiar Configuração JSON
+                      </button>
+                    </div>
+                    <div className="text-emerald-400">apiKey: <span className="text-white">{customConfig.apiKey || 'AIzaSyB4qKsRk_raCHs32OioeH7LX4pQHsF-U8I'}</span></div>
+                    <div className="text-emerald-400">authDomain: <span className="text-white">{customConfig.authDomain || 'vanguard1-b653d.firebaseapp.com'}</span></div>
+                    <div className="text-emerald-400">projectId: <span className="text-white">{customConfig.projectId || 'vanguard1-b653d'}</span></div>
+                    <div className="text-emerald-400">storageBucket: <span className="text-white">{customConfig.storageBucket || 'vanguard1-b653d.firebasestorage.app'}</span></div>
+                    <div className="text-emerald-400">messagingSenderId: <span className="text-white">{customConfig.messagingSenderId || '438614523977'}</span></div>
+                    <div className="text-emerald-400">appId: <span className="text-white">{customConfig.appId || '1:438614523977:web:ee220d9f4466297d0e7f98'}</span></div>
+                    <div className="text-emerald-400">measurementId: <span className="text-white">{customConfig.measurementId || 'G-5K4B73RX2Z'}</span></div>
+                  </div>
+
+                  <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800">
                     <button
                       type="button"
                       onClick={handleClearCustomFirebase}
@@ -494,13 +569,15 @@ service cloud.firestore {
                     >
                       Remover Configuração Local
                     </button>
-                    <button
-                      type="submit"
-                      className="px-5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold uppercase text-[10px] rounded transition-colors cursor-pointer flex items-center space-x-1"
-                    >
-                      <Cloud className="w-3.5 h-3.5" />
-                      <span>Salvar e Sincronizar Nuvem</span>
-                    </button>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="submit"
+                        className="px-5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold uppercase text-[10px] rounded transition-colors cursor-pointer flex items-center space-x-1"
+                      >
+                        <Cloud className="w-3.5 h-3.5" />
+                        <span>Salvar e Sincronizar Nuvem</span>
+                      </button>
+                    </div>
                   </div>
                 </form>
               )}

@@ -152,6 +152,9 @@ export default function App() {
             // Local device has rich data, but remote snapshot came empty -> Push local state up
             pushStateToFirebase(currentLocal);
           }
+        }, (error) => {
+          console.warn('Operando em modo offline local (sem conexão activa com o Firebase):', error?.message || error);
+          setFirebaseStatus('error');
         });
       } catch (error: any) {
         console.warn('Aviso: Operando em modo offline/local - sincronização com Firebase não disponível:', error?.message || error);
