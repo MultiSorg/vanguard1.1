@@ -82,6 +82,8 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
   // A Normal Teacher can toggle if the coordinator is allowed to edit grades in their discipline
   const isCoordAllowedToEditMyDiscipline = () => {
     if (!currentClass) return false;
+    // Coordinator editing their own discipline doesn't need permission from themselves
+    if (loggedTeacher.cargo === 'Coordenador' || isCoordinator) return true;
     const perm = dbState.permissoesEdicao.find(
       p => p.classId === currentClass.id && p.disciplineId === loggedTeacher.disciplinaId
     );
@@ -425,9 +427,12 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
   ) => {
     if (!currentClass) return;
     
-    // Checks: Is it my own discipline? No authorization needed.
-    // Is it another discipline? Must have permission allowed by that discipline's teacher!
-    if (disciplineId !== loggedTeacher.disciplinaId) {
+    // Checks: Is it my own discipline? No authorization needed for coordinator's own discipline!
+    const isOwnDiscipline = disciplineId === loggedTeacher.disciplinaId;
+    const targetDisc = currentClass.disciplinas.find(d => d.id === disciplineId);
+    const isTeacherOfDisc = targetDisc && targetDisc.professorId === loggedTeacher.id;
+
+    if (!isOwnDiscipline && !isTeacherOfDisc && !isCoordinator) {
       const allowed = dbState.permissoesEdicao.find(
         p => p.classId === currentClass.id && p.disciplineId === disciplineId
       )?.concedida;
@@ -615,18 +620,26 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
 
           {/* Teacher coordination edit permission toggler */}
           <div className="p-3 bg-slate-950/60 rounded border border-slate-850 space-y-2 text-xs mt-4">
-            <span className="text-[9px] text-slate-500 uppercase font-mono font-bold block">Controle do Coordenador</span>
-            <p className="text-[10px] text-slate-400">Permitir que o Coordenador altere notas da sua disciplina ({currentDiscipline?.nome})?</p>
-            <button
-              onClick={handleToggleCoordEditPermission}
-              className={`w-full py-1.5 text-[10px] font-bold font-mono rounded uppercase transition-all ${
-                isCoordAllowedToEditMyDiscipline()
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-400'
-              }`}
-            >
-              {isCoordAllowedToEditMyDiscipline() ? 'Permissão Concedida' : 'Dar Permissão'}
-            </button>
+            <span className="text-[9px] text-slate-500 uppercase font-mono font-bold block">Controle de Autorização</span>
+            {isCoordinator ? (
+              <p className="text-[10px] text-amber-400 font-semibold leading-tight">
+                ✓ Como Coordenador, você possui autorização total para alterar notas da sua disciplina ({currentDiscipline?.nome}) sem necessidade de permissão.
+              </p>
+            ) : (
+              <>
+                <p className="text-[10px] text-slate-400">Permitir que o Coordenador altere notas da sua disciplina ({currentDiscipline?.nome})?</p>
+                <button
+                  onClick={handleToggleCoordEditPermission}
+                  className={`w-full py-1.5 text-[10px] font-bold font-mono rounded uppercase transition-all ${
+                    isCoordAllowedToEditMyDiscipline()
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-400'
+                  }`}
+                >
+                  {isCoordAllowedToEditMyDiscipline() ? 'Permissão Concedida' : 'Dar Permissão'}
+                </button>
+              </>
+            )}
           </div>
 
           {/* COORDINATOR TAB SELECTOR */}
@@ -701,17 +714,17 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
               </div>
 
               {/* Student grading matrix */}
-              <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                <table className="w-full text-left border-collapse">
+              <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto scrollbar-thin scrollbar-thumb-indigo-500/30">
+                <table className="w-full min-w-[950px] text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400 font-mono text-[10px] uppercase">
-                      <th className="px-5 py-3">Nº</th>
-                      <th className="px-5 py-3">Nome do Aluno</th>
-                      <th className="px-5 py-3">Notas MAC (Contínuas)</th>
-                      <th className="px-5 py-3">PP (Prova Prof.)</th>
-                      <th className="px-5 py-3">PT (Trimestral)</th>
-                      <th className="px-5 py-3">Nota Final MAT</th>
-                      <th className="px-5 py-3 text-right">Adicionar Nota</th>
+                      <th className="px-5 py-3 whitespace-nowrap">Nº</th>
+                      <th className="px-5 py-3 whitespace-nowrap">Nome do Aluno</th>
+                      <th className="px-5 py-3 whitespace-nowrap">Notas MAC (Contínuas)</th>
+                      <th className="px-5 py-3 whitespace-nowrap">PP (Prova Prof.)</th>
+                      <th className="px-5 py-3 whitespace-nowrap">PT (Trimestral)</th>
+                      <th className="px-5 py-3 whitespace-nowrap">Nota Final MAT</th>
+                      <th className="px-5 py-3 text-right whitespace-nowrap">Adicionar Nota</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-850 text-xs">
@@ -1437,7 +1450,11 @@ export default function TeacherPanel({ dbState, loggedTeacher, onUpdateDbState, 
                               <td className="px-4 py-3 font-semibold text-white">Nº {st.numero} - {st.nome}</td>
                               {currentClass?.disciplinas.map(d => {
                                 const rep = calculateStudentGrades(st.id, d.id, dbState.currentTrimester, dbState);
-                                const isAllowed = d.professorId === loggedTeacher.id || dbState.permissoesEdicao.find(p => p.classId === currentClass.id && p.disciplineId === d.id)?.concedida;
+                                const isAllowed = 
+                                  d.id === loggedTeacher.disciplinaId || 
+                                  d.professorId === loggedTeacher.id || 
+                                  isCoordinator || 
+                                  dbState.permissoesEdicao.find(p => p.classId === currentClass.id && p.disciplineId === d.id)?.concedida;
                                 return (
                                   <td key={d.id} className="px-4 py-3">
                                     <div className="space-y-1">
@@ -1857,42 +1874,104 @@ function PrintReportOverlay({ type, classObj, studentId, dbState, onClose }: Pri
               <p className="text-xs font-bold text-slate-500 font-mono">Turma: {classObj.classe} - {classObj.identificacao} &bull; Sala {classObj.sala} &bull; {currentTrimesterName(dbState.currentTrimester)}</p>
             </div>
 
-            {/* Matrix table */}
-            <table className="w-full border-collapse border border-slate-950 text-xs">
+            {/* Matrix table for Pauta Final */}
+            <table className="w-full border-collapse border border-slate-950 text-[9px]">
               <thead>
                 <tr className="bg-slate-100 font-mono text-[9px]">
-                  <th className="border border-slate-950 p-1">Nº</th>
-                  <th className="border border-slate-950 p-1 text-left">Nome do Estudante</th>
+                  <th rowSpan={2} className="border border-slate-950 p-1 text-center font-bold">Nº</th>
+                  <th rowSpan={2} className="border border-slate-950 p-1 text-left font-bold">Nome do Estudante</th>
                   {classObj.disciplinas.map((d: any) => (
-                    <th key={d.id} className="border border-slate-950 p-1 text-center font-bold rotate-0 max-w-[80px]">{d.nome}</th>
+                    <th key={d.id} colSpan={4} className="border border-slate-950 p-1 text-center font-bold bg-slate-100">
+                      {d.nome}
+                    </th>
                   ))}
-                  <th className="border border-slate-950 p-1 text-center font-bold">Média Geral MAT</th>
+                  <th rowSpan={2} className="border border-slate-950 p-1 text-center font-bold bg-slate-200">Média Geral</th>
+                  <th rowSpan={2} className="border border-slate-950 p-1 text-center font-bold bg-slate-100">Resultado</th>
+                </tr>
+                <tr className="bg-slate-50 font-mono text-[7.5px]">
+                  {classObj.disciplinas.map((d: any) => (
+                    <React.Fragment key={d.id}>
+                      <th className="border border-slate-950 p-0.5 text-center font-mono">MT1</th>
+                      <th className="border border-slate-950 p-0.5 text-center font-mono">MT2</th>
+                      <th className="border border-slate-950 p-0.5 text-center font-mono">MT3</th>
+                      <th className="border border-slate-950 p-0.5 text-center font-mono font-bold bg-amber-100">MF</th>
+                    </React.Fragment>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {dbState.alunos.filter(s => s.turmaId === classObj.id).map(st => {
-                  let totalMat = 0;
-                  let count = 0;
+                  let totalMf = 0;
+                  let countMf = 0;
+                  let failingCount = 0;
                   
                   return (
-                    <tr key={st.id} className="hover:bg-slate-50">
-                      <td className="border border-slate-950 p-1 text-center font-mono font-bold">{st.numero}</td>
-                      <td className="border border-slate-950 p-1 font-bold">{st.nome}</td>
+                    <tr key={st.id} className="hover:bg-slate-50 font-sans">
+                      <td className="border border-slate-950 p-0.5 text-center font-mono font-bold">{st.numero}</td>
+                      <td className="border border-slate-950 p-0.5 font-bold truncate max-w-[140px]">{st.nome}</td>
                       {classObj.disciplinas.map((d: any) => {
-                        const rep = calculateStudentGrades(st.id, d.id, dbState.currentTrimester, dbState);
-                        if (rep.mat !== null) {
-                          totalMat += rep.mat;
-                          count++;
+                        const rep1 = calculateStudentGrades(st.id, d.id, 1, dbState);
+                        const rep2 = calculateStudentGrades(st.id, d.id, 2, dbState);
+                        const rep3 = calculateStudentGrades(st.id, d.id, 3, dbState);
+                        
+                        const mt1 = rep1.mat;
+                        const mt2 = rep2.mat;
+                        const mt3 = rep3.mat;
+
+                        const validMats = [mt1, mt2, mt3].filter((v): v is number => v !== null);
+                        const mf = validMats.length > 0 ? Number((validMats.reduce((a, b) => a + b, 0) / validMats.length).toFixed(1)) : null;
+
+                        if (mf !== null) {
+                          totalMf += mf;
+                          countMf++;
+                          if (mf < 10) failingCount++;
                         }
+
                         return (
-                          <td key={d.id} className={`border border-slate-950 p-1 text-center font-mono font-bold ${rep.mat && rep.mat < 10 ? 'text-red-600 bg-red-50' : ''}`}>
-                            {rep.mat !== null ? rep.mat : '-'}
-                          </td>
+                          <React.Fragment key={d.id}>
+                            <td className="border border-slate-950 p-0.5 text-center font-mono text-[8px]">
+                              {mt1 !== null ? mt1 : '-'}
+                            </td>
+                            <td className="border border-slate-950 p-0.5 text-center font-mono text-[8px]">
+                              {mt2 !== null ? mt2 : '-'}
+                            </td>
+                            <td className="border border-slate-950 p-0.5 text-center font-mono text-[8px]">
+                              {mt3 !== null ? mt3 : '-'}
+                            </td>
+                            <td className={`border border-slate-950 p-0.5 text-center font-mono font-bold text-[8px] bg-amber-50/50 ${
+                              mf !== null && mf < 10 ? 'text-red-600 bg-red-50 font-black' : 'text-slate-900'
+                            }`}>
+                              {mf !== null ? mf : '-'}
+                            </td>
+                          </React.Fragment>
                         );
                       })}
-                      <td className="border border-slate-950 p-1 text-center font-mono font-bold bg-slate-100">
-                        {count > 0 ? (totalMat / count).toFixed(1) : '-'}
-                      </td>
+                      
+                      {/* Média Geral Anual */}
+                      {(() => {
+                        const mediaGeral = countMf > 0 ? Number((totalMf / countMf).toFixed(1)) : null;
+                        const isPassing = mediaGeral !== null && mediaGeral >= 10 && failingCount === 0;
+                        const isRecurso = mediaGeral !== null && failingCount > 0 && failingCount <= 2;
+                        
+                        return (
+                          <>
+                            <td className="border border-slate-950 p-0.5 text-center font-mono font-bold bg-slate-100">
+                              {mediaGeral !== null ? mediaGeral : '-'}
+                            </td>
+                            <td className="border border-slate-950 p-0.5 text-center font-mono font-bold text-[8px]">
+                              {mediaGeral === null ? (
+                                <span className="text-slate-400">Pendente</span>
+                              ) : isPassing ? (
+                                <span className="text-emerald-700 font-bold">Transita</span>
+                              ) : isRecurso ? (
+                                <span className="text-amber-700 font-bold">Recurso</span>
+                              ) : (
+                                <span className="text-red-700 font-bold">Não Transita</span>
+                              )}
+                            </td>
+                          </>
+                        );
+                      })()}
                     </tr>
                   );
                 })}
